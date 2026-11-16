@@ -162,6 +162,39 @@ flag). `--stream` also sends every in-flight estimate. `--pause 5` waits 5 s bet
 **Robot home** is `ROBOT_HOME_CM = (-150, 330)`: 150 cm from the middle line on the left-post side, 330 cm from the net
 (from `docs/tasks/measurement_note.md`). Change it in `shot_landing.py` if the robot starts elsewhere.
 
+### All 20 test shots
+
+Predicted final landing for every test shot, against where it really landed (tape measure). Court cm, x from the
+middle line, y from the net. "Pi" is the Hailo model (INT8) on the Pi 5, 2026-11-15; "computer" is the ONNX model
+(full precision) that `shot_landing.py` uses without a Hailo. The two differ by a few cm because the Hailo model runs in 8-bit.
+
+| Shot | Measured x, y | Predicted on Pi x, y | Pi miss | Predicted on computer x, y | Computer miss | First estimate after hit |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0 | -171.0, 445.0 | -181.3, 476.0 | 33 cm | -181.8, 470.6 | 28 cm | 0.17 s |
+| 6 | -56.0, 590.0 | -57.2, 626.3 | 36 cm | -57.1, 625.9 | 36 cm | 0.12 s |
+| 12 | -131.0, 599.0 | -140.6, 621.2 | 24 cm | -139.3, 616.5 | 19 cm | 0.12 s |
+| 18 | -126.0, 658.0 | -124.8, 634.9 | 23 cm | -124.7, 631.4 | 27 cm | 0.12 s |
+| 24 | -58.0, 655.0 | -71.4, 664.2 | 16 cm | -71.0, 662.3 | 15 cm | 0.18 s |
+| 25 | -216.0, 566.0 | -209.5, 627.5 | 62 cm | -210.0, 617.5 | 52 cm | 0.12 s |
+| 31 | -67.0, 587.0 | -78.6, 606.3 | 23 cm | -75.0, 594.8 | 11 cm | 0.12 s |
+| 37 | -260.0, 612.0 | -271.2, 614.4 | 11 cm | -271.7, 614.2 | 12 cm | 0.13 s |
+| 43 | -110.0, 570.0 | -124.3, 541.3 | 32 cm | -124.2, 536.0 | 37 cm | 0.12 s |
+| 49 | -202.0, 650.0 | -195.2, 644.6 | 9 cm | -194.5, 644.8 | 9 cm | 0.13 s |
+| 50 | -168.0, 621.0 | -162.5, 632.2 | 12 cm | -162.3, 627.5 | 9 cm | 0.13 s |
+| 56 | -194.0, 520.0 | -201.9, 519.9 | 8 cm | -201.6, 523.8 | 8 cm | 0.12 s |
+| 62 | -21.0, 578.0 | -23.7, 566.4 | 12 cm | -22.9, 558.3 | 20 cm | 0.12 s |
+| 68 | -59.0, 509.0 | -74.6, 461.9 | 50 cm | -74.7, 467.5 | 44 cm | 0.12 s |
+| 74 | -269.0, 602.0 | -272.3, 621.2 | 19 cm | -273.7, 619.4 | 18 cm | 0.12 s |
+| 75 | -270.0, 523.0 | -276.1, 566.2 | 44 cm | -277.5, 564.5 | 42 cm | 0.12 s |
+| 81 | -232.0, 598.0 | -221.0, 587.3 | 15 cm | -220.7, 589.3 | 14 cm | 0.12 s |
+| 87 | -170.0, 548.0 | -177.2, 535.8 | 14 cm | -177.5, 537.9 | 13 cm | 0.13 s |
+| 93 | -264.0, 562.0 | -255.2, 531.9 | 31 cm | -256.9, 526.5 | 36 cm | 0.17 s |
+| 99 | -227.0, 564.0 | -231.9, 534.6 | 30 cm | -231.5, 536.9 | 28 cm | 0.12 s |
+| **all 20** | | | **25.2 / 23 cm** mean / median | | **23.9 / 19.5 cm** mean / median | |
+
+Shots 25, 68 and 75 miss by 40–60 cm on both machines, so their error comes from tracking and the flight model, not the
+Hailo. `python vision/shot_landing.py --all` reproduces the computer columns.
+
 ### Wiring and enabling the Pi UART
 
 | Pi 5 | ESP32-S3 |
