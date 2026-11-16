@@ -27,6 +27,11 @@ def export_onnx(weights_path):
     return YOLO(weights_path).export(format="onnx", imgsz=IMAGE_SIZE, opset=11, simplify=True, dynamic=False)
 
 
+def onnx_image_size(onnx_path):
+    import onnx
+    return onnx.load(onnx_path).graph.input[0].type.tensor_type.shape.dim[-1].dim_value
+
+
 def detect_head_outputs(onnx_path):
     import onnx
     graph = onnx.load(onnx_path).graph
@@ -55,11 +60,11 @@ def short_name(layer_name):
     return layer_name.split("/")[-1]
 
 
-def write_nms_config(box_layers, class_layers, path):
+def write_nms_config(box_layers, class_layers, path, image_size):
     decoders = [{"name": f"{NETWORK_NAME}/bbox_decoder_{scale}", "stride": stride,
                  "reg_layer": box_layers[scale], "cls_layer": class_layers[scale]}
                 for scale, stride in enumerate(STRIDES)]
-    config = {"nms_scores_th": NMS_SCORE_THRESHOLD, "nms_iou_th": NMS_IOU_THRESHOLD, "image_dims": [IMAGE_SIZE, IMAGE_SIZE],
+    config = {"nms_scores_th": NMS_SCORE_THRESHOLD, "nms_iou_th": NMS_IOU_THRESHOLD, "image_dims": [image_size, image_size],
               "max_proposals_per_class": MAX_BOXES, "classes": 1, "regression_length": REGRESSION_LENGTH,
               "background_removal": False, "background_removal_index": 0, "bbox_decoders": decoders}
     with open(path, "w") as f:
@@ -80,7 +85,7 @@ def model_script(class_layers, nms_config_path, input_name, nms_engine, noise_an
     return "\n".join(lines) + "\n"
 
 
-def calibration_images(path, count=None):
+def calibration_images(path, image_size, count=None):
     import tensorflow as tf
     folder = path
     if path.endswith(".zip"):
@@ -92,11 +97,11 @@ def calibration_images(path, count=None):
         raise SystemExit(f"no .jpg or .png calibration crops in {path}")
     if count:
         files = files[::max(1, len(files) // count)][:count]
-    images = np.empty((len(files), IMAGE_SIZE, IMAGE_SIZE, 3), np.float32)
+    images = np.empty((len(files), image_size, image_size, 3), np.float32)
     for index, file in enumerate(files):
         image = tf.io.decode_image(tf.io.read_file(file), channels=3, expand_animations=False).numpy()
-        if image.shape != (IMAGE_SIZE, IMAGE_SIZE, 3):
-            raise SystemExit(f"calibration crops must be {IMAGE_SIZE}x{IMAGE_SIZE}: {file} is {image.shape}")
+        if image.shape != (image_size, image_size, 3):
+            raise SystemExit(f"calibration crops must be {image_size}x{image_size} like the model input: {file} is {image.shape}")
         images[index] = image
     return images
 
@@ -134,7 +139,7 @@ def compile_to_hef(runner, output):
 def main():
     parser = argparse.ArgumentParser(description="Compile the bird YOLO (YOLOv8/YOLO11) into a Hailo .hef, quantized to INT8 with motion-view crops.")
     parser.add_argument("--weights", help="bird_yolo11n_v1.pt (exported to ONNX at 640 first)")
-    parser.add_argument("--onnx", help="an existing 640x640 ONNX export instead of --weights")
+    parser.add_argument("--onnx", help="an existing ONNX export instead of --weights; its input size (640 or 320) sets the crop size")
     parser.add_argument("--calibration", default="calibration_crops.zip")
     parser.add_argument("--calibration-count", type=int, help="use only this many crops, spread over the set, to save memory")
     parser.add_argument("--hw-arch", default="hailo10h", help="hailo10h for the AI HAT+ 2")
@@ -158,11 +163,12 @@ def main():
         raise SystemExit("give --weights or --onnx")
     onnx_path = args.onnx or export_onnx(args.weights)
     box_nodes, class_nodes, input_name = detect_head_outputs(onnx_path)
-    print("input:", input_name, "| head outputs:", box_nodes + class_nodes)
+    image_size = onnx_image_size(onnx_path)
+    print("input:", input_name, f"{image_size}x{image_size}", "| head outputs:", box_nodes + class_nodes)
 
     runner = ClientRunner(hw_arch=args.hw_arch)
     runner.translate_onnx_model(onnx_path, NETWORK_NAME, start_node_names=[input_name], end_node_names=box_nodes + class_nodes,
-                                net_input_shapes={input_name: [1, 3, IMAGE_SIZE, IMAGE_SIZE]})
+                                net_input_shapes={input_name: [1, 3, image_size, image_size]})
     names = layers_by_original_name(runner)
     missing = [node for node in box_nodes + class_nodes if node not in names]
     if missing:
@@ -170,12 +176,12 @@ def main():
     box_layers = [names[node] for node in box_nodes]
     class_layers = [names[node] for node in class_nodes]
     nms_config_path = os.path.abspath("bird_nms_config.json")
-    write_nms_config(box_layers, class_layers, nms_config_path)
+    write_nms_config(box_layers, class_layers, nms_config_path, image_size)
     script = model_script(class_layers, nms_config_path, input_name, args.nms_engine, args.noise_analysis)
     print("model script:\n" + script)
     runner.load_model_script(script)
 
-    images = calibration_images(args.calibration, args.calibration_count)
+    images = calibration_images(args.calibration, image_size, args.calibration_count)
     print(f"optimizing with {len(images)} calibration crops (GPU: {has_gpu()})")
     runner.optimize(images)
     runner.save_har(optimized_har)

@@ -32,6 +32,7 @@ vision/*.so
 # Model files regenerated from models/bird_yolo11n_v1.pt (not used by the pipeline)
 models/bird_yolo11n_v1.hef
 models/bird_yolo11n_v1.onnx
+models/*_320.onnx
 models/*_ncnn_model/
 
 # Experiments kept locally; only the replay test is tracked

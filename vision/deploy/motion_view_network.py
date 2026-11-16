@@ -67,13 +67,19 @@ def motion_view_from_layers(previous, current, upcoming):
     return np.clip(np.rint(rgb[::-1].transpose(1, 2, 0)), 0, 255).astype(np.uint8)
 
 
-def export_motion_view_onnx(path):
-    torch.onnx.export(MotionViewLayers().eval(), torch.zeros(1, 3, IMAGE_SIZE, IMAGE_SIZE), path, opset_version=OPSET,
+def export_motion_view_onnx(path, image_size=IMAGE_SIZE):
+    torch.onnx.export(MotionViewLayers().eval(), torch.zeros(1, 3, image_size, image_size), path, opset_version=OPSET,
                       input_names=[GRAY_STACK_INPUT], output_names=["motion_view_rgb"], dynamo=False)
+
+
+def yolo_image_size(yolo):
+    return yolo.graph.input[0].type.tensor_type.shape.dim[-1].dim_value
 
 
 def gray_stack_model(motion_view_onnx, yolo_onnx, output):
     front, yolo = onnx.load(motion_view_onnx), onnx.load(yolo_onnx)
+    if yolo_image_size(yolo) != yolo_image_size(front):
+        raise SystemExit(f"{yolo_onnx} takes {yolo_image_size(yolo)} x {yolo_image_size(yolo)} images; export it at {yolo_image_size(front)} or pass --image-size {yolo_image_size(yolo)}")
     front.ir_version = yolo.ir_version
     front = compose.add_prefix(front, prefix="motion_view/")
     merged = compose.merge_models(front, yolo, io_map=[("motion_view/motion_view_rgb", YOLO_INPUT)])
@@ -86,11 +92,12 @@ def gray_stack_model(motion_view_onnx, yolo_onnx, output):
 
 def main():
     parser = argparse.ArgumentParser(description="Put the motion view in front of YOLO as fixed network layers: the model then takes three gray crops (t-1, t, t+1) instead of the orange motion view.")
-    parser.add_argument("--yolo-onnx", default="models/bird_yolo11n_v1.onnx", help="YOLO exported to ONNX at 640, opset 11")
+    parser.add_argument("--yolo-onnx", default="models/bird_yolo11n_v1.onnx", help="YOLO exported to ONNX at --image-size, opset 11")
+    parser.add_argument("--image-size", type=int, default=IMAGE_SIZE, help="crop side in pixels; 320 for the crop used while following the bird")
     parser.add_argument("--output", default="models/bird_yolo11n_v1_gray_stack.onnx")
     args = parser.parse_args()
     motion_view_onnx = args.output[:-5] + "_front.onnx"
-    export_motion_view_onnx(motion_view_onnx)
+    export_motion_view_onnx(motion_view_onnx, args.image_size)
     gray_stack_model(motion_view_onnx, args.yolo_onnx, args.output)
     os.remove(motion_view_onnx)
     print("saved", args.output)
