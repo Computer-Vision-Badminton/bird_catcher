@@ -33,3 +33,7 @@ vision/*.so
 models/bird_yolo11n_v1.hef
 models/bird_yolo11n_v1.onnx
 models/*_ncnn_model/
+
+# Experiments kept locally; only the replay test is tracked
+vision/experiment/*
+!vision/experiment/pi_realtime_test.py
