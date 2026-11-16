@@ -28,3 +28,8 @@ calibration_gray_stack.zip
 
 # Compiled C++ flight core (vision/flight_cpp/build.sh)
 vision/*.so
+
+# Model files regenerated from models/bird_yolo11n_v1.pt (not used by the pipeline)
+models/bird_yolo11n_v1.hef
+models/bird_yolo11n_v1.onnx
+models/*_ncnn_model/
