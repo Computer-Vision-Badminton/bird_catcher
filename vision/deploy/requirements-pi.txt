@@ -4,3 +4,4 @@ opencv-python-headless
 ultralytics
 ncnn
 pybind11
+pyserial
