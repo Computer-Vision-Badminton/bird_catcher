@@ -37,3 +37,6 @@ models/*_ncnn_model/
 # Experiments kept locally; only the replay test is tracked
 vision/experiment/*
 !vision/experiment/pi_realtime_test.py
+
+# Personal scratch notebooks, kept locally
+playground/
