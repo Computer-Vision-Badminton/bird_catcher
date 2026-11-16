@@ -24,6 +24,7 @@ frame), and anything sent to the ESP32. The Pi–ESP32 link is specified in `doc
 
 ```
 models/bird_yolo11n_v1_gray_stack.hef   compiled detector for the Hailo-10H (HailoRT 5.1.1 tested)
+models/bird_yolo11n_v1_gray_stack.onnx  the same detector for a regular CPU (onnxruntime), for testing without a Hailo
 pi_test_package/clips/shot_*.avi        20 recorded test shots (original ZED frames, 2560 x 720, 60 fps)
 pi_test_package/manifest.json           per shot: hit frame, frame times, measured landing; tuned drag + correction
 pi_test_package/net_calibration.json    camera position and lens calibration for these recordings
@@ -71,6 +72,31 @@ Replay all 20 test shots through the full pipeline (a few minutes):
 
 `--shots 37 74` runs only some shots. The run prints time per stage, the per-shot landing prediction and miss, and saves
 `pi_test_package/results_*.json`.
+
+## On a regular computer (no Hailo)
+
+The `.hef` only runs on a Hailo chip. On a Mac, Linux or Windows computer use the same network exported as ONNX,
+`models/bird_yolo11n_v1_gray_stack.onnx`, which runs on the CPU through `onnxruntime`. It gives the same accuracy
+(23.9 / 19.6 cm mean / median on the 20 test shots on a MacBook Air) but CPU speed (about 140 ms per frame there), so
+use it to check behaviour and predictions, not timing.
+
+Mac or Linux:
+
+```bash
+git clone https://github.com/Computer-Vision-Badminton/bird_catcher
+cd bird_catcher
+git checkout vision-pipeline
+python3 -m venv .venv
+.venv/bin/pip install numpy scipy opencv-python onnxruntime pybind11
+bash vision/flight_cpp/build.sh
+.venv/bin/python vision/experiment/pi_realtime_test.py --detector onnx --model models/bird_yolo11n_v1_gray_stack.onnx --input gray-stack
+```
+
+`build.sh` needs a C++ compiler (`xcode-select --install` on a Mac, `sudo apt install g++` on Linux). It is optional:
+without it the flight fit runs in Python, with the same results but about 20× slower per fit.
+
+Windows (PowerShell): the same steps with `python -m venv .venv`, `.venv\Scripts\pip install ...` and
+`.venv\Scripts\python vision\experiment\pi_realtime_test.py ...`; skip `build.sh` (the Python flight fit is used).
 
 ## Using the landing prediction
 
