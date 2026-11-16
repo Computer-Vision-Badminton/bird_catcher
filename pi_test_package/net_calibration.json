@@ -1,0 +1,379 @@
+{
+  "warnings": [
+    "Some points are off by more than 5 px: check those clicks or their court coordinates."
+  ],
+  "court_axes": {
+    "units": "centimetres",
+    "origin": "floor, directly under the net, on the middle line",
+    "x": "distance from the middle line toward the sideline, positive toward the post on the right of the image",
+    "y": "distance from the net toward the back line, positive on the camera's (landing) side, negative on the hitter's side",
+    "z": "height above the floor"
+  },
+  "camera_position_court_cm": [
+    -141.0,
+    406.7,
+    68.6
+  ],
+  "camera_angles_deg": {
+    "yaw_from_facing_net": 2.61,
+    "pitch_up": 15.01,
+    "roll": -0.64
+  },
+  "camera_from_court": {
+    "how_to_use": "camera_point_m = matrix @ [x, y, z] (court point in metres, x from middle line, y from net) + translation_m",
+    "matrix": [
+      [
+        0.999031,
+        0.042689,
+        -0.010739
+      ],
+      [
+        0.000696,
+        -0.259245,
+        -0.965811
+      ],
+      [
+        0.044014,
+        -0.964868,
+        0.259023
+      ]
+    ],
+    "translation_m": [
+      1.2429,
+      1.718,
+      3.8085
+    ]
+  },
+  "intrinsics": {
+    "focal_px": 699.8,
+    "focal_was_fitted": true,
+    "principal_point_px": [
+      640.0,
+      429.3
+    ],
+    "baseline_m": 0.12,
+    "right_eye_vertical_offset_px": 12.21,
+    "lens_distortion_k1_k2": [
+      -0.1771,
+      0.0385
+    ],
+    "lens_distortion_model": "radial: pixel = focal * normalized * (1 + k1 r^2 + k2 r^4) + centre"
+  },
+  "used_tape_measured_camera": true,
+  "reprojection": [
+    {
+      "name": "left_post_top",
+      "eye": "left",
+      "clicked": [
+        342.1,
+        465.2
+      ],
+      "projected": [
+        338.1,
+        465.6
+      ],
+      "error_px": 4.02
+    },
+    {
+      "name": "right_post_top",
+      "eye": "left",
+      "clicked": [
+        1233.5,
+        459.2
+      ],
+      "projected": [
+        1235.0,
+        460.4
+      ],
+      "error_px": 1.92
+    },
+    {
+      "name": "right_post_base",
+      "eye": "left",
+      "clicked": [
+        1269.5,
+        678.3
+      ],
+      "projected": [
+        1271.5,
+        682.5
+      ],
+      "error_px": 4.65
+    },
+    {
+      "name": "hitter_back_center",
+      "eye": "left",
+      "clicked": [
+        705.3,
+        660.3
+      ],
+      "projected": [
+        703.8,
+        659.7
+      ],
+      "error_px": 1.61
+    },
+    {
+      "name": "hitter_back_left",
+      "eye": "left",
+      "clicked": [
+        498.2,
+        660.3
+      ],
+      "projected": [
+        499.6,
+        661.1
+      ],
+      "error_px": 1.67
+    },
+    {
+      "name": "hitter_service_center",
+      "eye": "left",
+      "clicked": [
+        774.3,
+        699.3
+      ],
+      "projected": [
+        777.1,
+        693.4
+      ],
+      "error_px": 6.56
+    },
+    {
+      "name": "left_post_top",
+      "eye": "right",
+      "clicked": [
+        322.6,
+        477.2
+      ],
+      "projected": [
+        319.7,
+        477.6
+      ],
+      "error_px": 2.98
+    },
+    {
+      "name": "right_post_top",
+      "eye": "right",
+      "clicked": [
+        1223,
+        471.2
+      ],
+      "projected": [
+        1222.1,
+        472.8
+      ],
+      "error_px": 1.82
+    },
+    {
+      "name": "right_post_base",
+      "eye": "right",
+      "clicked": [
+        1262,
+        696.3
+      ],
+      "projected": [
+        1257.4,
+        696.2
+      ],
+      "error_px": 4.6
+    },
+    {
+      "name": "hitter_back_center",
+      "eye": "right",
+      "clicked": [
+        697.8,
+        672.3
+      ],
+      "projected": [
+        695.8,
+        672.0
+      ],
+      "error_px": 2.0
+    },
+    {
+      "name": "hitter_back_left",
+      "eye": "right",
+      "clicked": [
+        487.7,
+        669.3
+      ],
+      "projected": [
+        491.7,
+        673.1
+      ],
+      "error_px": 5.56
+    },
+    {
+      "name": "hitter_service_center",
+      "eye": "right",
+      "clicked": [
+        757.8,
+        711.3
+      ],
+      "projected": [
+        763.1,
+        705.9
+      ],
+      "error_px": 7.52
+    }
+  ],
+  "rms_error_px": 4.23,
+  "used_measured_tilt_deg": 15,
+  "source": "calibration.png",
+  "frame": 0,
+  "points": [
+    {
+      "name": "left_post_top",
+      "hint": "where the net's top band meets the left post",
+      "left": [
+        342.1,
+        465.2
+      ],
+      "right": [
+        322.6,
+        477.2
+      ],
+      "court_cm": [
+        -305,
+        0,
+        155
+      ]
+    },
+    {
+      "name": "left_post_base",
+      "hint": "where the left post meets the floor",
+      "left": null,
+      "right": null,
+      "court_cm": [
+        -305,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "right_post_top",
+      "hint": "where the net's top band meets the right post",
+      "left": [
+        1233.5,
+        459.2
+      ],
+      "right": [
+        1223,
+        471.2
+      ],
+      "court_cm": [
+        305,
+        0,
+        155
+      ]
+    },
+    {
+      "name": "right_post_base",
+      "hint": "where the right post meets the floor",
+      "left": [
+        1269.5,
+        678.3
+      ],
+      "right": [
+        1262,
+        696.3
+      ],
+      "court_cm": [
+        305,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "net_center_top",
+      "hint": "top of the net band at the middle line (your tape mark)",
+      "left": null,
+      "right": null,
+      "court_cm": [
+        0,
+        0,
+        152.4
+      ]
+    },
+    {
+      "name": "net_center_floor",
+      "hint": "floor point under the net on the middle line",
+      "left": null,
+      "right": null,
+      "court_cm": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "hitter_back_center",
+      "hint": "hitter's middle line meets the hitter's back line",
+      "left": [
+        705.3,
+        660.3
+      ],
+      "right": [
+        697.8,
+        672.3
+      ],
+      "court_cm": [
+        0,
+        -670,
+        0
+      ]
+    },
+    {
+      "name": "hitter_back_left",
+      "hint": "hitter's back line meets the left doubles sideline",
+      "left": [
+        498.2,
+        660.3
+      ],
+      "right": [
+        487.7,
+        669.3
+      ],
+      "court_cm": [
+        -305,
+        -670,
+        0
+      ]
+    },
+    {
+      "name": "hitter_back_right",
+      "hint": "hitter's back line meets the right doubles sideline",
+      "left": null,
+      "right": null,
+      "court_cm": [
+        305,
+        -670,
+        0
+      ]
+    },
+    {
+      "name": "hitter_service_center",
+      "hint": "hitter's middle line meets the hitter's short service line",
+      "left": [
+        774.3,
+        699.3
+      ],
+      "right": [
+        757.8,
+        711.3
+      ],
+      "court_cm": [
+        0,
+        -198,
+        0
+      ]
+    }
+  ],
+  "measured_camera_court_cm": [
+    -125,
+    400,
+    75
+  ],
+  "measured_tilt_deg": 15
+}

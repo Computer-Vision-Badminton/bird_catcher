@@ -13,3 +13,18 @@ __pycache__/
 # Data
 data/
 data/recordings/
+
+# Labeling, visualization and benchmark tools (not used in production)
+vision/helper/
+
+# Test-run results written by pi_realtime_test.py
+pi_test_package/results_*.json
+
+# Hailo INT8 calibration crops (export_calibration_crops.py)
+calibration_crops/
+calibration_crops.zip
+calibration_gray_stack/
+calibration_gray_stack.zip
+
+# Compiled C++ flight core (vision/flight_cpp/build.sh)
+vision/*.so
