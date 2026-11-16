@@ -5,16 +5,19 @@ import cv2
 import numpy as np
 
 from bird_tracker import EYES, FRAMES_AFTER_HIT, longest_rising_chain, match_in_right_eye, moving_blobs
-from crop_tracking import CROP_SIZE, CropFollower, crop_origin, right_eye_aim
+from crop_tracking import CROP_SIZE, FOLLOW_CROP_SIZE, CropFollower, crop_origin, right_crop_center
 from detectors import GRAY_STACK_INPUT
 from flight_model import flight_points
 from frames import crop_eye, plain_gray
 from landing_worker import LandingPredictor
 from motion_view import current_position_motion_view
 
-STAGES = ("gray", "motion_view", "aim_left", "yolo_left", "aim_right", "yolo_right", "track", "predict")
+STAGES = ("gray", "motion_view", "aim", "yolo", "track", "predict")
 FRAMES_NEEDED_PER_VIEW = 3
 FIT_EVERY_FRAMES = 1
+SEARCH_WITH_FOLLOW_ALWAYS = "always"
+SEARCH_WITH_FOLLOW_ONCE_SEEN = "once-seen"
+SEARCH_WITH_FOLLOW_CHOICES = (SEARCH_WITH_FOLLOW_ALWAYS, SEARCH_WITH_FOLLOW_ONCE_SEEN)
 
 
 class StageClock:
@@ -33,10 +36,25 @@ def blobs_around(grays):
     return moving_blobs(*smoothed)
 
 
+def blobs_near(grays, center):
+    height, width = grays[-1].shape[:2]
+    left, top = crop_origin(*center, width, height)
+    window = [gray[top:top + CROP_SIZE, left:left + CROP_SIZE] for gray in grays]
+    return [(x + left, y + top, area) for x, y, area in blobs_around(window)]
+
+
+def detections_in_frame(detections_per_crop, origins):
+    return [[(x + left, y + top, confidence) for x, y, confidence in detections]
+            for detections, (left, top) in zip(detections_per_crop, origins)]
+
+
 class ShotPipeline:
     def __init__(self, detector, court, right_row_offset, terminal_speed_m_s, correction, hit_frame, last_frame,
-                 fit_every_frames=FIT_EVERY_FRAMES, predictor=None):
+                 fit_every_frames=FIT_EVERY_FRAMES, predictor=None, follow_detector=None, search_with_follow_detector=None,
+                 overlap_detection=False):
         self.detector = detector
+        self.follow_detector = follow_detector
+        self.search_with_follow_detector = search_with_follow_detector
         self.detector_takes_grays = getattr(detector, "input_kind", None) == GRAY_STACK_INPUT
         self.court = court
         self.right_row_offset = right_row_offset
@@ -51,12 +69,15 @@ class ShotPipeline:
         self.frames_to_track = range(hit_frame - 2, min(last_frame, hit_frame + FRAMES_AFTER_HIT))
         self.recent_grays = {eye: collections.deque(maxlen=FRAMES_NEEDED_PER_VIEW) for eye in EYES}
         self.frame_times = {}
-        self.followers = {eye: CropFollower() for eye in EYES}
+        self.left_follower = CropFollower()
         self.found = {eye: {} for eye in EYES}
         self.stereo = []
         self.landing_cm = None
         self.landing_from_frame = None
         self.final_landing_cm = None
+        self.overlap_detection = overlap_detection
+        self.pending_detection = None
+        self.newest_frame_arrived_at = None
 
     def first_frame_needed(self):
         return self.frames_to_track.start - 1
@@ -69,45 +90,113 @@ class ShotPipeline:
             return self.recent_grays[eye]
         return [current_position_motion_view(*self.recent_grays[eye])]
 
-    def detect_in_crop(self, images, center):
-        height, width = images[0].shape[:2]
-        left, top = crop_origin(*center, width, height)
-        crops = [image[top:top + CROP_SIZE, left:left + CROP_SIZE] for image in images]
-        crop = np.ascontiguousarray(np.dstack(crops) if len(crops) > 1 else crops[0])
-        return [(x + left, y + top, confidence) for x, y, confidence in self.detector.detect(crop)]
+    def detector_and_crop_size(self, frame):
+        if self.follow_detector is not None and self.follow_detector_fits(frame):
+            return self.follow_detector, FOLLOW_CROP_SIZE
+        return self.detector, CROP_SIZE
 
-    def crop_center(self, eye, frame):
-        follower = self.followers[eye]
-        blobs = blobs_around(self.recent_grays[eye]) if follower.needs_blobs(frame) else []
-        height, width = self.recent_grays[eye][-1].shape[:2]
-        return follower.crop_center(frame, blobs, width, height)
+    def follow_detector_fits(self, frame):
+        if not self.left_follower.needs_blobs(frame):
+            return True
+        if self.search_with_follow_detector == SEARCH_WITH_FOLLOW_ALWAYS:
+            return True
+        return self.search_with_follow_detector == SEARCH_WITH_FOLLOW_ONCE_SEEN and bool(self.left_follower.recent)
 
-    def push(self, frame_index, stereo_frame, time_s):
-        clock = StageClock()
+    def cut_crops(self, views_and_centers, crop_size):
+        crops, origins = [], []
+        for images, center in views_and_centers:
+            height, width = images[0].shape[:2]
+            left, top = crop_origin(*center, width, height, crop_size)
+            window = [image[top:top + crop_size, left:left + crop_size] for image in images]
+            crops.append(np.ascontiguousarray(np.dstack(window) if len(window) > 1 else window[0]))
+            origins.append((left, top))
+        return crops, origins
+
+    def detect_in_crops(self, views_and_centers, detector, crop_size):
+        crops, origins = self.cut_crops(views_and_centers, crop_size)
+        return detections_in_frame(detector.detect_batch(crops), origins)
+
+    def left_crop_center(self, frame):
+        grays = self.recent_grays["left"]
+        height, width = grays[-1].shape[:2]
+        if not self.left_follower.needs_blobs(frame):
+            return self.left_follower.crop_center(frame, [], width, height)
+        heading = self.left_follower.last_seen_heading(frame)
+        blobs = blobs_around(grays) if heading is None else blobs_near(grays, heading)
+        return self.left_follower.crop_center(frame, blobs, width, height, without_blobs=heading)
+
+    def take_frame(self, frame_index, stereo_frame, time_s):
+        self.newest_frame_arrived_at = time.perf_counter()
         self.frame_times[frame_index] = time_s
         for eye in EYES:
             self.recent_grays[eye].append(plain_gray(crop_eye(stereo_frame, eye)))
-        clock.lap("gray")
-        middle = frame_index - 1
-        if middle not in self.frames_to_track or len(self.recent_grays["left"]) < FRAMES_NEEDED_PER_VIEW:
-            return None
+
+    def ready_to_detect(self, frame):
+        return frame in self.frames_to_track and len(self.recent_grays["left"]) >= FRAMES_NEEDED_PER_VIEW
+
+    def aimed_views(self, frame, clock):
         views = {eye: self.detector_input(eye) for eye in EYES}
         clock.lap("motion_view")
+        left_center = self.left_crop_center(frame)
+        right_center = right_crop_center(left_center, self.right_row_offset)
+        detector, crop_size = self.detector_and_crop_size(frame)
+        clock.lap("aim")
+        return [(views["left"], left_center), (views["right"], right_center)], detector, crop_size
 
-        left_center = self.crop_center("left", middle)
-        clock.lap("aim_left")
-        left_detections = self.detect_in_crop(views["left"], left_center)
-        self.followers["left"].remember(middle, left_detections)
-        self.found["left"][middle] = left_detections
-        clock.lap("yolo_left")
+    def remember_detections(self, frame, left_detections, right_detections):
+        self.left_follower.remember(frame, left_detections)
+        self.found["left"][frame] = left_detections
+        self.found["right"][frame] = right_detections
 
-        right_center = right_eye_aim(left_detections, self.right_row_offset) or self.crop_center("right", middle)
-        clock.lap("aim_right")
-        right_detections = self.detect_in_crop(views["right"], right_center)
-        self.followers["right"].remember(middle, right_detections)
-        self.found["right"][middle] = right_detections
-        clock.lap("yolo_right")
+    def push(self, frame_index, stereo_frame, time_s):
+        if self.overlap_detection:
+            return self.push_overlapped(frame_index, stereo_frame, time_s)
+        clock = StageClock()
+        self.take_frame(frame_index, stereo_frame, time_s)
+        clock.lap("gray")
+        middle = frame_index - 1
+        if not self.ready_to_detect(middle):
+            return None
+        inputs_arrived_at = self.newest_frame_arrived_at
+        views_and_centers, detector, crop_size = self.aimed_views(middle, clock)
+        self.remember_detections(middle, *self.detect_in_crops(views_and_centers, detector, crop_size))
+        clock.lap("yolo")
+        return self.track_and_predict(middle, crop_size, inputs_arrived_at, None, clock)
 
+    def push_overlapped(self, frame_index, stereo_frame, time_s):
+        clock = StageClock()
+        self.take_frame(frame_index, stereo_frame, time_s)
+        clock.lap("gray")
+        detected = self.finish_pending_detection(clock)
+        middle = frame_index - 1
+        if self.ready_to_detect(middle):
+            self.start_detection(middle, clock)
+        if detected is None:
+            return None
+        return self.track_and_predict(*detected, clock)
+
+    def start_detection(self, frame, clock):
+        inputs_arrived_at = self.newest_frame_arrived_at
+        views_and_centers, detector, crop_size = self.aimed_views(frame, clock)
+        crops, origins = self.cut_crops(views_and_centers, crop_size)
+        self.pending_detection = (frame, crop_size, origins, inputs_arrived_at, detector.start_batch(crops))
+        clock.lap("yolo")
+
+    def finish_pending_detection(self, clock):
+        if self.pending_detection is None:
+            return None
+        frame, crop_size, origins, inputs_arrived_at, job = self.pending_detection
+        self.pending_detection = None
+        self.remember_detections(frame, *detections_in_frame(job.wait(), origins))
+        clock.lap("yolo")
+        return frame, crop_size, inputs_arrived_at, job.call_ms
+
+    def drain(self):
+        clock = StageClock()
+        detected = self.finish_pending_detection(clock)
+        return None if detected is None else self.track_and_predict(*detected, clock)
+
+    def track_and_predict(self, frame, crop_size, inputs_arrived_at, detector_call_ms, clock):
         chain = longest_rising_chain(self.found["left"], self.hit_frame)
         self.stereo = match_in_right_eye(chain, self.found["right"], self.right_row_offset)
         clock.lap("track")
@@ -115,16 +204,18 @@ class ShotPipeline:
         flight = flight_points(self.court, self.stereo, self.hit_frame, self.frame_times)
         self.frames_since_fit += 1
         if flight is not None and self.frames_since_fit >= self.fit_every_frames:
-            if self.predictor.submit(middle, *flight):
+            if self.predictor.submit(frame, *flight):
                 self.frames_since_fit = 0
                 self.fits_started += 1
             else:
                 self.fits_waiting_for_worker += 1
         self.take_newest_landing()
         clock.lap("predict")
-        return {"frame": middle, "predicted": flight is not None, "stages_ms": clock.timings,
+        return {"frame": frame, "predicted": flight is not None, "stages_ms": clock.timings, "crop_size": crop_size,
                 "landing_cm": None if self.landing_cm is None else [float(v) for v in self.landing_cm],
-                "landing_from_frame": self.landing_from_frame}
+                "landing_from_frame": self.landing_from_frame,
+                "ready_after_inputs_ms": (time.perf_counter() - inputs_arrived_at) * 1000,
+                "detector_call_ms": detector_call_ms}
 
     def take_newest_landing(self):
         result = self.predictor.poll()
@@ -133,6 +224,7 @@ class ShotPipeline:
             self.fit_ms.append(fit_ms)
 
     def finish(self):
+        self.drain()
         flight = flight_points(self.court, self.stereo, self.hit_frame, self.frame_times)
         if flight is not None:
             self.final_landing_cm = self.predictor.final_landing_cm(*flight)

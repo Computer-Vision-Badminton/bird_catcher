@@ -30,12 +30,12 @@ def bird_centers(label_path, width, height):
     return [(float(row[1]) * width, float(row[2]) * height) for row in rows]
 
 
-def crop_like_pipeline(images, center, rng):
+def crop_like_pipeline(images, center, rng, crop_size=CROP_SIZE):
     height, width = images[0].shape[:2]
-    aimed = (center[0] + rng.uniform(-FOLLOWER_AIM_ERROR_PX, FOLLOWER_AIM_ERROR_PX),
-             center[1] + rng.uniform(-FOLLOWER_AIM_ERROR_PX, FOLLOWER_AIM_ERROR_PX))
-    left, top = crop_origin(*aimed, width, height)
-    crops = [image[top:top + CROP_SIZE, left:left + CROP_SIZE] for image in images]
+    aim_error_px = FOLLOWER_AIM_ERROR_PX * crop_size / CROP_SIZE
+    aimed = (center[0] + rng.uniform(-aim_error_px, aim_error_px), center[1] + rng.uniform(-aim_error_px, aim_error_px))
+    left, top = crop_origin(*aimed, width, height, crop_size)
+    crops = [image[top:top + crop_size, left:left + crop_size] for image in images]
     return np.ascontiguousarray(np.dstack(crops) if len(crops) > 1 else crops[0])
 
 
@@ -59,13 +59,14 @@ def save_crop(crop, folder, index, input_kind):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Cut 640x640 motion-view crops from the YOLO training images, aimed the way the pipeline aims, for Hailo INT8 calibration.")
+    parser = argparse.ArgumentParser(description="Cut square motion-view or gray-stack crops from the YOLO training images, aimed the way the pipeline aims, for Hailo INT8 calibration.")
     parser.add_argument("--dataset", default="data/annotation/clears_nov10_labeled")
     parser.add_argument("--count", type=int, default=512)
     parser.add_argument("--output", default="calibration_crops")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--input", choices=INPUT_KINDS, default=MOTION_VIEW_INPUT,
                         help="gray-stack: 3 gray frames (t-1, t, t+1) read from the session videos, saved as lossless PNG")
+    parser.add_argument("--crop-size", type=int, default=CROP_SIZE, help="crop side in pixels; 320 for the model used while following the bird")
     parser.add_argument("--session", default="data/recordings/clears_nov10", help="videos for --input gray-stack")
     args = parser.parse_args()
 
@@ -91,7 +92,7 @@ def main():
         height, width = frames[0].shape[:2]
         centers = bird_centers(label_path, width, height)
         center = rng.choice(centers) if centers else (rng.uniform(0, width), rng.uniform(0, height))
-        save_crop(crop_like_pipeline(frames, center, rng), args.output, index, args.input)
+        save_crop(crop_like_pipeline(frames, center, rng, args.crop_size), args.output, index, args.input)
     archive = shutil.make_archive(args.output, "zip", args.output)
     print(f"{bird_count} crops with the bird, {empty_count} without, from {len(images)} training images")
     print("saved", archive)
