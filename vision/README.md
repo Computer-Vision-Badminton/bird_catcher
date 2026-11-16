@@ -173,6 +173,11 @@ flag). `--stream` also sends every in-flight estimate. `--pause 5` waits 5 s bet
 Enable it once on the Pi: `sudo raspi-config` → Interface Options → Serial Port → login shell over serial: **No**,
 serial port hardware: **Yes**, then reboot. The port is `/dev/serial0`.
 
+Sending needs `pyserial`. If the Pi was set up before `shot_landing.py` existed, run `bash vision/deploy/setup_pi.sh`
+once more to install it. On a regular computer, printing landings needs nothing extra; to send through a USB-serial
+adapter, run `.venv/bin/pip install pyserial` and pass the adapter's port, e.g. `--send-uart /dev/ttyUSB0`
+(`COM3` on Windows).
+
 ### Message format (Pi → ESP32)
 
 One frame per landing estimate, as planned in `docs/tasks/hardware/communication.md`:
