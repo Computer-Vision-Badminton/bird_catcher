@@ -1,0 +1,6 @@
+numpy
+scipy
+opencv-python-headless
+ultralytics
+ncnn
+pybind11
