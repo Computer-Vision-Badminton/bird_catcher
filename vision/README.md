@@ -6,8 +6,9 @@ It predicts where the shuttle will land, frame by frame, from the ZED stereo cam
 **Current status (2026-11-15, Pi 5 + Hailo-10H):** 50.5 ms per stereo frame (about 20 fps), landing predicted within
 25 cm on average (23 cm median) on the 20 test shots. The first landing estimate is ready 7–10 frames (~0.12–0.17 s) after the hit.
 
-**Not in this branch yet:** a live camera loop, automatic hit detection (each test shot starts at a hand-labelled hit
-frame), and anything sent to the ESP32. The Pi–ESP32 link is specified in `docs/tasks/hardware/communication.md`.
+**Not in this branch yet:** a live camera loop and automatic hit detection (each test shot starts at a hand-labelled hit
+frame). For motor testing, `vision/shot_landing.py` replays a recorded shot and returns (or sends to the ESP32) its
+predicted landing point; see "Landing point for the motors" below.
 
 ## What runs where
 
@@ -31,6 +32,8 @@ pi_test_package/net_calibration.json    camera position and lens calibration for
 vision/pipeline.py                      ShotPipeline: one stereo frame in, updated landing estimate out
 vision/experiment/pi_realtime_test.py   replays the 20 shots through ShotPipeline and times every stage
 vision/deploy/setup_pi.sh               one-time Pi setup (Python environment + C++ flight core)
+vision/shot_landing.py                  test helper: replay a shot, get (or send) its landing point
+vision/esp32_link.py                    Pi -> ESP32 message format and UART sending
 vision/deploy/hailo_check.py            quick check that the .hef loads and finds the bird
 vision/flight_cpp/                      C++ flight simulation and its build script
 ```
@@ -122,3 +125,85 @@ These are court coordinates, not robot coordinates: converting a landing point i
 own position on the court.
 
 See `vision/experiment/pi_realtime_test.py` (`run_shot`) for a complete example of feeding frames and reading estimates.
+
+## Landing point for the motors (test helper)
+
+`vision/shot_landing.py` replays one recorded shot through the full pipeline and returns where it predicts the shuttle
+lands. It picks the Hailo model on the Pi and the ONNX model anywhere else. This is a stand-in for the live camera: the
+robot gets real predictions from real recorded flights.
+
+From Python (run from the `vision/` folder, or add it to `sys.path`):
+
+```python
+from shot_landing import ROBOT_HOME_CM, landing_for_shot
+
+result = landing_for_shot(37)
+result.landing_cm            # (-271.7, 614.2)  final landing, court cm (x, y)
+result.offset_from_home_cm   # (-121.7, 284.2)  landing minus ROBOT_HOME_CM
+result.measured_cm           # (-260.0, 612.0)  where it really landed (tape measure)
+result.miss_cm               # 11.9
+result.estimates             # every in-flight estimate: frame, seconds_after_hit, x_cm, y_cm
+```
+
+`landing_for_shot(37, on_estimate=callback)` calls `callback(estimate)` as soon as each new in-flight estimate is ready,
+the way a live system would feed the robot (first one about 0.12–0.17 s after the hit).
+
+From the command line:
+
+```bash
+.venv/bin/python vision/shot_landing.py                  # list the 20 test shots
+.venv/bin/python vision/shot_landing.py 37 74            # print their landings
+.venv/bin/python vision/shot_landing.py --all --send-uart --pause 5
+```
+
+`--send-uart` sends each shot's final landing to the ESP32 (`/dev/serial0`, 921600 baud; another port can follow the
+flag). `--stream` also sends every in-flight estimate. `--pause 5` waits 5 s between shots so the robot can drive back.
+
+**Robot home** is `ROBOT_HOME_CM = (-150, 330)`: 150 cm from the middle line on the left-post side, 330 cm from the net
+(from `docs/tasks/measurement_note.md`). Change it in `shot_landing.py` if the robot starts elsewhere.
+
+### Wiring and enabling the Pi UART
+
+| Pi 5 | ESP32-S3 |
+| --- | --- |
+| GPIO14 TX (header pin 8) | GPIO18 (UART1 RX) |
+| GPIO15 RX (header pin 10) | GPIO17 (UART1 TX) |
+| GND (header pin 6) | GND |
+
+Enable it once on the Pi: `sudo raspi-config` → Interface Options → Serial Port → login shell over serial: **No**,
+serial port hardware: **Yes**, then reboot. The port is `/dev/serial0`.
+
+### Message format (Pi → ESP32)
+
+One frame per landing estimate, as planned in `docs/tasks/hardware/communication.md`:
+
+| Bytes | Field | Value |
+| --- | --- | --- |
+| 2 | sync | `0xAA 0x55` |
+| 1 | type | `0x01` = landing target |
+| 1 | len | payload length, `5` |
+| 1 | seq | 0–255, +1 per frame, wraps; a gap means a lost frame |
+| 2 | x | int16 little-endian, **millimetres** from the middle line (positive toward the right post in the camera image) |
+| 2 | y | int16 little-endian, **millimetres** from the net (positive on the robot's side) |
+| 1 | flags | bit 0 = 1: final landing of the shot; 0: in-flight estimate |
+| 2 | crc | CRC-16/CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection) over type, len, seq and payload; little-endian |
+
+Example, final landing x = −271.9 cm, y = 613.8 cm, seq 1: `aa 55 01 05 01 61 f5 fa 17 01 39 74`.
+
+CRC on the ESP32 (check value: the bytes of `"123456789"` give `0x29B1`):
+
+```cpp
+uint16_t crc16Ccitt(const uint8_t *data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < length; i++) {
+    crc ^= static_cast<uint16_t>(data[i]) << 8;
+    for (int bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021) : static_cast<uint16_t>(crc << 1);
+    }
+  }
+  return crc;
+}
+```
+
+The Python side of the format is `vision/esp32_link.py` (`frame`, `decode_frames`, `decode_landing`), handy for checking
+what the ESP32 receives.
