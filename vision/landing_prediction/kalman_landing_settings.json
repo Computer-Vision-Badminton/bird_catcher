@@ -1,0 +1,34 @@
+{
+ "source": "clears_nov10 landing_test_preregistration.json (task 4, 2026-11-16): RECOMMENDED_SETTING and filtered_correction, fixed on the 80 training shots",
+ "filter_setting": {
+  "sigma_u_px": 0.5,
+  "sigma_v_px": 1.0,
+  "sigma_disparity_px": 0.2,
+  "acceleration_noise_m2_s3": 0.0,
+  "terminal_speed_m_s": 6.4,
+  "terminal_speed_sigma_m_s": 0.15,
+  "terminal_speed_walk_m2_s3": 0.0,
+  "top_edge_v_px": 12.0,
+  "top_edge_sigma_v_factor": 5.0,
+  "gate_mahalanobis_sq": 16.3,
+  "initial_points": 3,
+  "initial_sigma_scale": 3.0,
+  "initial_velocity_sigma_m_s": 1.0,
+  "reset_after_rejections": 3,
+  "first_frame_after_hit": 2
+ },
+ "correction": [
+  [
+   1.0795217762483813,
+   0.06408186119129909
+  ],
+  [
+   0.09688459508479273,
+   1.0780144725074179
+  ],
+  [
+   -73.04806123120144,
+   -13.495309013357069
+  ]
+ ]
+}

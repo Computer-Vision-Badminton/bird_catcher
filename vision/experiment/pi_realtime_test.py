@@ -9,14 +9,14 @@ import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from court_3d import StereoCourt
-from crop_tracking import CROP_SIZE, FOLLOW_CROP_SIZE
-from detectors import DETECTOR_KINDS, INPUT_KINDS, MOTION_VIEW_INPUT, STEREO_BATCH, load_detector
-from flight_model import FLIGHT_ENGINE
-from landing_worker import LandingPredictor
-from pipeline import FIT_EVERY_FRAMES, SEARCH_WITH_FOLLOW_CHOICES, STAGES, ShotPipeline
+from vision.calibration.court_3d import StereoCourt
+from vision.detection.crop_tracking import CROP_SIZE, FOLLOW_CROP_SIZE
+from vision.detection.detectors import DETECTOR_KINDS, INPUT_KINDS, MOTION_VIEW_INPUT, STEREO_BATCH, load_detector
+from vision.flight.flight_model import FLIGHT_ENGINE
+from vision.landing_prediction.landing_worker import LandingPredictor
+from vision.pipeline.shot_pipeline import FIT_EVERY_FRAMES, LANDING_BY_FIT, LANDING_BY_KALMAN, LANDING_METHODS, SEARCH_WITH_FOLLOW_CHOICES, STAGES, ShotPipeline
 
 CAMERA_FPS = 60
 FRAME_BUDGET_MS = 1000 / CAMERA_FPS
@@ -31,10 +31,10 @@ def warm_up(detector, crop_size=CROP_SIZE):
 
 
 def run_shot(package_dir, entry, detector, court, manifest, predictor, fit_every, follow_detector=None, search_with_follow_detector=None,
-             overlap_detection=False):
+             overlap_detection=False, landing_method=LANDING_BY_FIT):
     pipeline = ShotPipeline(detector, court, manifest["right_row_offset_px"], manifest["terminal_speed_m_s"],
                             manifest["correction"], entry["hit_frame"], entry["end_frame"] + manifest["frames_after_hit"],
-                            fit_every, predictor, follow_detector, search_with_follow_detector, overlap_detection)
+                            fit_every, predictor, follow_detector, search_with_follow_detector, overlap_detection, landing_method)
     clip = cv2.VideoCapture(os.path.join(package_dir, "clips", entry["clip"]))
     processed, decode_ms, frame_wall_ms = [], [], []
     first_prediction_frame = None
@@ -136,7 +136,7 @@ def print_report(stage_stats, total_stats, decode_stats, shot_rows, frames_over_
 
 def main():
     parser = argparse.ArgumentParser(description="Run the whole bird pipeline frame by frame on the packaged test shots and time every stage.")
-    parser.add_argument("--package", default="pi_test_package")
+    parser.add_argument("--package", default="test/pi_test_package")
     parser.add_argument("--detector", choices=DETECTOR_KINDS, default="ncnn")
     parser.add_argument("--model", required=True, help="bird_yolo11n_v1_640_ncnn_model folder, bird_yolo11n_v1.pt, or the .hef file")
     parser.add_argument("--follow-model", help=f"same detector at {FOLLOW_CROP_SIZE} x {FOLLOW_CROP_SIZE}, used while following the bird; --model still searches at {CROP_SIZE}")
@@ -150,6 +150,8 @@ def main():
     parser.add_argument("--fit-background", action="store_true", help="run the flight fit in a separate process on another core instead of inside the frame loop")
     parser.add_argument("--overlap", action="store_true",
                         help="start the detector on frame t+1 and run tracking, the flight fit and the next gray conversion while it works; same landings, one call later")
+    parser.add_argument("--landing-method", choices=LANDING_METHODS, default=LANDING_BY_FIT,
+                        help="fit: least-squares flight fit + correction (default); kalman: C++ Kalman filter + its correction (vision/landing_prediction/kalman_landing_settings.json)")
     parser.add_argument("--landing-tuning", help="landing_experiment_*.json in the package tuned on this model's tracks (terminal speed + correction)")
     args = parser.parse_args()
     if args.search_with_follow_model and not args.follow_model:
@@ -176,7 +178,7 @@ def main():
         if args.shots and entry["shot"] not in args.shots:
             continue
         processed, decode_ms, frame_wall_ms, landing, first_prediction_frame, pipeline = run_shot(
-            args.package, entry, detector, court, manifest, predictor, args.fit_every, follow_detector, args.search_with_follow_model, args.overlap)
+            args.package, entry, detector, court, manifest, predictor, args.fit_every, follow_detector, args.search_with_follow_model, args.overlap, args.landing_method)
         all_frame_wall.extend(frame_wall_ms)
         all_fit_ms.extend(pipeline.fit_ms)
         fits += pipeline.fits_started
@@ -201,7 +203,7 @@ def main():
     decode_stats = summary(all_decode)
     frames_over_budget = int(sum(total > FRAME_BUDGET_MS for total in totals))
     predict_on_frames = [frame["stages_ms"]["predict"] for frame in all_frames if frame["predicted"]]
-    fit_report = {"mode": "background" if args.fit_background else "inline", "engine": FLIGHT_ENGINE, "every": args.fit_every, "fits": fits, "waited": waited,
+    fit_report = {"mode": LANDING_BY_KALMAN if args.landing_method == LANDING_BY_KALMAN else "background" if args.fit_background else "inline", "engine": FLIGHT_ENGINE, "every": args.fit_every, "fits": fits, "waited": waited,
                   "fit_ms": summary(all_fit_ms) if all_fit_ms else None}
     detector_calls = [frame["detector_call_ms"] for frame in all_frames if frame["detector_call_ms"] is not None]
     overlap_report = {"overlap": args.overlap, "frame_wall_ms": summary(all_frame_wall),
@@ -220,12 +222,13 @@ def main():
     fit_name += f"_follow{FOLLOW_CROP_SIZE}" if follow_detector else ""
     fit_name += f"_search_{args.search_with_follow_model}" if args.search_with_follow_model else ""
     fit_name += "_overlap" if args.overlap else ""
+    fit_name += "_kalman" if args.landing_method == LANDING_BY_KALMAN else ""
     run_name = f"{platform.node().split('.')[0]}_{args.detector}_{model_name}_{fit_name}".replace(" ", "_")
     output = os.path.join(args.package, f"results_{run_name}.json")
     with open(output, "w") as f:
         json.dump({"machine": platform.node(), "processor": platform.machine(), "detector": args.detector, "model": args.model,
                    "frame_budget_ms": FRAME_BUDGET_MS, "stages_ms": stage_stats, "total_ms": total_stats, "decode_ms": decode_stats, **overlap_report,
-                   "frames_over_budget": frames_over_budget, "frames": len(all_frames), "yolo_ms_by_crop_size": yolo_by_crop_size, "flight_fit": fit_report, "shots": shot_rows}, f, indent=1)
+                   "frames_over_budget": frames_over_budget, "frames": len(all_frames), "yolo_ms_by_crop_size": yolo_by_crop_size, "flight_fit": fit_report, "landing_method": args.landing_method, "shots": shot_rows}, f, indent=1)
     print(f"\nsaved {output}")
     predictor.close()
     for loaded in (follow_detector, detector):
