@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Net calibration</title>
+<style>
+  body { margin: 0; font: 13px system-ui, sans-serif; background: #111; color: #ddd; display: flex; height: 100vh; }
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #stage { flex: 1; min-height: 0; overflow: auto; background: #000; position: relative; }
+  #view { display: block; cursor: crosshair; }
+  #loupe { position: fixed; width: 240px; height: 240px; border: 2px solid #fc6; pointer-events: none; display: none; background: #000; }
+  #controls { padding: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: #1b1b1b; border-top: 1px solid #333; }
+  #side { width: 600px; overflow: auto; background: #181818; padding: 8px; border-left: 1px solid #333; display: flex; flex-direction: column; gap: 10px; }
+  input, select, button { background: #222; color: #ddd; border: 1px solid #444; border-radius: 3px; padding: 3px 6px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { background: #333; }
+  button.primary { background: #2a5; border-color: #2a5; color: #fff; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border-bottom: 1px solid #2a2a2a; padding: 3px; text-align: left; white-space: nowrap; }
+  td input.num { width: 52px; }
+  td input.name { width: 120px; }
+  tr.selected { background: #23402c; }
+  .hint { color: #888; font-size: 12px; white-space: normal; }
+  .done { color: #6c6; }
+  .missing { color: #666; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #result { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 12px; background: #111; padding: 6px; border: 1px solid #333; }
+  .bad { color: #f66; }
+</style>
+</head>
+<body>
+<div id="main">
+  <div id="stage"><canvas id="view"></canvas></div>
+  <canvas id="loupe" width="240" height="240"></canvas>
+  <div id="controls">
+    <span id="source"></span>
+    <span id="frameControls">
+      Frame <input id="frame" type="number" min="0" style="width:80px">
+      <button id="loadFrame">Load</button>
+    </span>
+    <label>Zoom <select id="zoom"><option value="fit" selected>Fit</option><option value="1">100%</option><option value="1.5">150%</option></select></label>
+    <label><input type="checkbox" id="showOverlay" checked> Show solved court lines</label>
+    <span class="hint">Click a point in the LEFT eye, then the same point in the RIGHT eye. Arrows nudge the last click 1 px (Shift 5 px). N next point.</span>
+  </div>
+</div>
+<div id="side">
+  <div>
+    <b>Net points</b>
+    <div class="hint">Court centimetres: x from the middle line (+ toward the post on the right of the image), y from the net (+ on the camera/landing side, − on the hitter's side), z height. Edit if your court differs.</div>
+  </div>
+  <table id="points"></table>
+  <div class="row"><button id="addPoint">Add custom point</button></div>
+  <div>
+    <b>Tripod position you measured (optional, centimetres)</b>
+    <div class="row">
+      x from middle line <input id="camX" class="num" style="width:60px">
+      y from net <input id="camY" class="num" style="width:60px">
+      lens height <input id="camZ" class="num" style="width:60px"> cm
+      tilt up <input id="camTilt" class="num" style="width:50px"> °
+    </div>
+    <div class="hint">x: negative if the tripod is on the left-hand post's side as seen in the image. y: positive (the tripod is on the landing side).</div>
+  </div>
+  <div class="row"><button id="solve" class="primary">Solve camera position</button><span id="status"></span></div>
+  <div id="result">Not solved yet.</div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const EYE_WIDTH = 1280;
+const EYE_HEIGHT = 720;
+let info = null;
+let state = null;
+let selected = 0;
+let lastEye = "left";
+let image = new Image();
+let solution = null;
+
+function scale() {
+  const zoom = $("zoom").value;
+  if (zoom !== "fit") return Number(zoom);
+  return Math.min($("stage").clientWidth / (2 * EYE_WIDTH), $("stage").clientHeight / EYE_HEIGHT);
+}
+
+function eyeOffset(eye) {
+  return eye === "left" ? 0 : EYE_WIDTH;
+}
+
+function drawCross(context, x, y, size, color) {
+  context.strokeStyle = color;
+  context.beginPath();
+  context.moveTo(x - size, y); context.lineTo(x + size, y);
+  context.moveTo(x, y - size); context.lineTo(x, y + size);
+  context.stroke();
+}
+
+function drawOverlay(context, s) {
+  if (!solution || solution.error || !$("showOverlay").checked) return;
+  context.lineWidth = 1;
+  context.strokeStyle = "rgba(0, 220, 255, 0.8)";
+  ["left", "right"].forEach(eye => {
+    context.save();
+    context.beginPath();
+    context.rect(eyeOffset(eye) * s, 0, EYE_WIDTH * s, EYE_HEIGHT * s);
+    context.clip();
+    solution.overlay[eye].forEach(line => {
+      context.beginPath();
+      line.forEach(([u, v], k) => {
+        const x = (u + eyeOffset(eye)) * s, y = v * s;
+        k ? context.lineTo(x, y) : context.moveTo(x, y);
+      });
+      context.stroke();
+    });
+    context.restore();
+  });
+  solution.reprojection.forEach(entry => {
+    drawCross(context, (entry.projected[0] + eyeOffset(entry.eye)) * s, entry.projected[1] * s, 7, "#f44");
+  });
+}
+
+function draw() {
+  if (!image.complete || !state) return;
+  const s = scale();
+  const canvas = $("view");
+  canvas.width = Math.round(2 * EYE_WIDTH * s);
+  canvas.height = Math.round(EYE_HEIGHT * s);
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  context.strokeStyle = "#fc6";
+  context.beginPath();
+  context.moveTo(EYE_WIDTH * s, 0); context.lineTo(EYE_WIDTH * s, canvas.height);
+  context.stroke();
+  drawOverlay(context, s);
+  state.points.forEach((point, index) => {
+    ["left", "right"].forEach(eye => {
+      if (!point[eye]) return;
+      const x = (point[eye][0] + eyeOffset(eye)) * s, y = point[eye][1] * s;
+      context.lineWidth = 2;
+      context.strokeStyle = index === selected ? "#fc6" : "#6f6";
+      context.beginPath();
+      context.arc(x, y, 6, 0, 2 * Math.PI);
+      context.stroke();
+      context.fillStyle = context.strokeStyle;
+      context.font = "12px system-ui";
+      context.fillText(point.name, x + 8, y - 8);
+    });
+  });
+}
+
+function drawLoupe(event) {
+  const loupe = $("loupe");
+  const rect = $("view").getBoundingClientRect();
+  const s = scale();
+  const imageX = (event.clientX - rect.left) / s;
+  const imageY = (event.clientY - rect.top) / s;
+  const magnification = 4;
+  const span = loupe.width / magnification;
+  const context = loupe.getContext("2d");
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = "#000";
+  context.fillRect(0, 0, loupe.width, loupe.height);
+  context.drawImage(image, imageX - span / 2, imageY - span / 2, span, span, 0, 0, loupe.width, loupe.height);
+  drawCross(context, loupe.width / 2, loupe.height / 2, 12, "#fc6");
+  loupe.style.display = "block";
+  loupe.style.left = `${event.clientX + 20}px`;
+  loupe.style.top = `${Math.max(0, event.clientY - loupe.height - 20)}px`;
+}
+
+function pointStatus(point, eye) {
+  return point[eye] ? `<span class="done">${point[eye][0].toFixed(1)}, ${point[eye][1].toFixed(1)}</span>` : `<span class="missing">click</span>`;
+}
+
+function numberInput(value, onChange) {
+  const input = document.createElement("input");
+  input.className = "num";
+  input.value = value;
+  input.addEventListener("change", () => { onChange(Number(input.value)); save(); });
+  return input;
+}
+
+function smallButton(text, title, onClick) {
+  const element = document.createElement("button");
+  element.textContent = text;
+  element.title = title;
+  element.addEventListener("click", event => { event.stopPropagation(); onClick(); element.blur(); });
+  return element;
+}
+
+function renderPoints() {
+  const table = $("points");
+  table.innerHTML = "<tr><th></th><th>point</th><th title='cm from middle line'>x cm</th><th title='cm from net'>y cm</th><th title='cm above floor'>z cm</th><th>left eye</th><th>right eye</th><th></th></tr>";
+  state.points.forEach((point, index) => {
+    const row = table.insertRow();
+    row.className = index === selected ? "selected" : "";
+    row.addEventListener("click", () => select(index));
+    row.insertCell().innerHTML = index === selected ? "▶" : "";
+    const nameCell = row.insertCell();
+    const name = document.createElement("input");
+    name.className = "name";
+    name.value = point.name;
+    name.addEventListener("change", () => { point.name = name.value.trim() || point.name; save(); draw(); });
+    nameCell.appendChild(name);
+    if (point.hint) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = point.hint;
+      nameCell.appendChild(hint);
+    }
+    [0, 1, 2].forEach(axis => row.insertCell().appendChild(numberInput(point.court_cm[axis], value => { point.court_cm[axis] = value; })));
+    row.insertCell().innerHTML = pointStatus(point, "left");
+    row.insertCell().innerHTML = pointStatus(point, "right");
+    const actions = row.insertCell();
+    actions.appendChild(smallButton("clear", "remove this point's clicks", () => { point.left = point.right = null; save(); renderPoints(); draw(); }));
+    if (point.custom) {
+      actions.appendChild(smallButton("x", "delete this custom point", () => { state.points.splice(index, 1); selected = 0; save(); renderPoints(); draw(); }));
+    }
+  });
+}
+
+function select(index) {
+  selected = (index + state.points.length) % state.points.length;
+  lastEye = "left";
+  renderPoints();
+  draw();
+}
+
+function save() {
+  state.measured_camera_cm = ["camX", "camY", "camZ"].map(id => $(id).value.trim() === "" ? null : Number($(id).value));
+  state.measured_tilt_deg = $("camTilt").value.trim() === "" ? null : Number($("camTilt").value);
+  return fetch("/save", { method: "POST", body: JSON.stringify(state) });
+}
+
+function placeClick(event) {
+  const rect = $("view").getBoundingClientRect();
+  const s = scale();
+  const x = (event.clientX - rect.left) / s;
+  const y = (event.clientY - rect.top) / s;
+  const eye = x < EYE_WIDTH ? "left" : "right";
+  const point = state.points[selected];
+  point[eye] = [Math.round((x - eyeOffset(eye)) * 10) / 10, Math.round(y * 10) / 10];
+  lastEye = eye;
+  if (point.left && point.right && eye === "right" && selected < state.points.length - 1) {
+    selected += 1;
+    lastEye = "left";
+  }
+  save();
+  renderPoints();
+  draw();
+}
+
+function nudge(dx, dy) {
+  const point = state.points[selected];
+  if (!point[lastEye]) return;
+  point[lastEye] = [point[lastEye][0] + dx, point[lastEye][1] + dy];
+  save();
+  renderPoints();
+  draw();
+}
+
+function describe(result) {
+  if (result.error) return `<span class="bad">${result.error}</span>`;
+  const [x, y, z] = result.camera_position_court_cm;
+  const angles = result.camera_angles_deg;
+  const lines = [
+    ...result.warnings.map(warning => `<span class="bad">!! ${warning}</span>`),
+    ...(result.warnings.length ? [""] : []),
+    `camera at x ${x.toFixed(0)} cm from middle line, y ${y.toFixed(0)} cm from net, ${z.toFixed(0)} cm high`,
+    `pointing: yaw ${angles.yaw_from_facing_net}°, pitch up ${angles.pitch_up}°, roll ${angles.roll}°`,
+    `focal ${result.intrinsics.focal_px} px (${result.intrinsics.focal_was_fitted ? "fitted" : "assumed"}), lens bend k1 ${result.intrinsics.lens_distortion_k1_k2[0]}, right eye vertical offset ${result.intrinsics.right_eye_vertical_offset_px} px`,
+    `fit error ${result.rms_error_px} px rms`,
+    "",
+    ...result.reprojection.map(entry => `${entry.error_px > 5 ? "!! " : "   "}${entry.name.padEnd(18)} ${entry.eye.padEnd(5)} ${entry.error_px.toFixed(1)} px`),
+    "",
+    `saved to ${result.saved_to}`,
+  ];
+  return lines.join("\n");
+}
+
+function solveCamera() {
+  $("status").textContent = "solving...";
+  save().then(() => fetch("/solve", { method: "POST", body: JSON.stringify(state) }))
+    .then(response => response.json())
+    .then(result => {
+      solution = result;
+      $("result").innerHTML = describe(result);
+      $("status").textContent = result.error ? "" : "solved";
+      draw();
+    })
+    .catch(() => { $("status").textContent = "SOLVE FAILED"; });
+}
+
+function loadImage() {
+  image = new Image();
+  image.onload = draw;
+  image.src = `/image?frame=${state.frame || 0}&t=${Date.now()}`;
+}
+
+$("view").addEventListener("click", placeClick);
+$("view").addEventListener("mousemove", drawLoupe);
+$("view").addEventListener("mouseleave", () => { $("loupe").style.display = "none"; });
+$("zoom").addEventListener("change", () => { $("zoom").blur(); draw(); });
+$("showOverlay").addEventListener("change", () => { $("showOverlay").blur(); draw(); });
+$("solve").addEventListener("click", solveCamera);
+$("addPoint").addEventListener("click", () => {
+  state.points.push({ name: `point_${state.points.length}`, hint: "", court_cm: [0, 0, 0], left: null, right: null, custom: true });
+  select(state.points.length - 1);
+  save();
+});
+$("loadFrame").addEventListener("click", () => {
+  state.frame = Math.max(0, Math.min(info.frames - 1, Number($("frame").value) || 0));
+  solution = null;
+  save();
+  loadImage();
+});
+["camX", "camY", "camZ", "camTilt"].forEach(id => $(id).addEventListener("change", save));
+window.addEventListener("resize", draw);
+document.addEventListener("keydown", event => {
+  if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") {
+    if (event.key === "Enter" || event.key === "Escape") event.target.blur();
+    return;
+  }
+  const step = event.shiftKey ? 5 : 1;
+  const actions = {
+    ArrowLeft: () => nudge(-step, 0),
+    ArrowRight: () => nudge(step, 0),
+    ArrowUp: () => nudge(0, -step),
+    ArrowDown: () => nudge(0, step),
+    n: () => select(selected + 1),
+  };
+  const action = actions[event.key.length === 1 ? event.key.toLowerCase() : event.key];
+  if (action) {
+    event.preventDefault();
+    action();
+  }
+});
+
+fetch("/state")
+  .then(response => response.json())
+  .then(result => {
+    info = result;
+    state = result.state;
+    $("source").textContent = info.source;
+    $("frameControls").style.display = info.is_video ? "" : "none";
+    $("frame").value = state.frame || 0;
+    const [camX, camY, camZ] = state.measured_camera_cm || [null, null, null];
+    $("camX").value = camX ?? "";
+    $("camY").value = camY ?? "";
+    $("camZ").value = camZ ?? "";
+    $("camTilt").value = state.measured_tilt_deg ?? "";
+    renderPoints();
+    loadImage();
+  });
+</script>
+</body>
+</html>
