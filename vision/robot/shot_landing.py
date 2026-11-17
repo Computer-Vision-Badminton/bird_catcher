@@ -3,18 +3,21 @@ import argparse
 import collections
 import json
 import os
+import sys
 import time
 
 import cv2
 import numpy as np
 
-from court_3d import StereoCourt
-from detectors import GRAY_STACK_INPUT, load_detector
-from esp32_link import DEFAULT_BAUD, DEFAULT_PORT, Esp32Link
-from pipeline import ShotPipeline
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_PACKAGE = os.path.join(REPO, "pi_test_package")
+from vision.calibration.court_3d import StereoCourt
+from vision.detection.detectors import GRAY_STACK_INPUT, load_detector
+from vision.robot.esp32_link import DEFAULT_BAUD, DEFAULT_PORT, Esp32Link
+from vision.pipeline.shot_pipeline import LANDING_BY_FIT, LANDING_METHODS, ShotPipeline
+
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_PACKAGE = os.path.join(REPO, "test", "pi_test_package")
 HAILO_MODEL = os.path.join(REPO, "models", "bird_yolo11n_v1_gray_stack.hef")
 CPU_MODEL = os.path.join(REPO, "models", "bird_yolo11n_v1_gray_stack.onnx")
 ROBOT_HOME_CM = (-150.0, 330.0)
@@ -37,8 +40,9 @@ def distance_cm(a, b):
 
 
 class ShotReplay:
-    def __init__(self, package=DEFAULT_PACKAGE, detector=None):
+    def __init__(self, package=DEFAULT_PACKAGE, detector=None, landing_method=LANDING_BY_FIT):
         self.package = package
+        self.landing_method = landing_method
         with open(os.path.join(package, "manifest.json")) as f:
             self.manifest = json.load(f)
         with open(os.path.join(package, "net_calibration.json")) as f:
@@ -53,7 +57,8 @@ class ShotReplay:
         entry = self.shots[shot_number]
         manifest = self.manifest
         pipeline = ShotPipeline(self.detector, self.court, manifest["right_row_offset_px"], manifest["terminal_speed_m_s"],
-                                manifest["correction"], entry["hit_frame"], entry["end_frame"] + manifest["frames_after_hit"])
+                                manifest["correction"], entry["hit_frame"], entry["end_frame"] + manifest["frames_after_hit"],
+                                landing_method=self.landing_method)
         hit_time = entry["frame_times_s"][entry["hit_frame"] - entry["first_frame"]]
         clip = cv2.VideoCapture(os.path.join(self.package, "clips", entry["clip"]))
         estimates, frame_ms = [], []
@@ -106,10 +111,11 @@ def main():
     parser.add_argument("--send-uart", nargs="?", const=DEFAULT_PORT, metavar="PORT", help=f"send each landing to the ESP32 (default port {DEFAULT_PORT})")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     parser.add_argument("--stream", action="store_true", help="with --send-uart: also send every in-flight estimate, not only the final landing")
+    parser.add_argument("--landing-method", choices=LANDING_METHODS, default=LANDING_BY_FIT, help="fit (default) or kalman")
     parser.add_argument("--pause", type=float, default=0.0, help="seconds to wait between shots, e.g. to let the robot drive back home")
     args = parser.parse_args()
 
-    replay = ShotReplay()
+    replay = ShotReplay(landing_method=args.landing_method)
     shots = replay.shot_numbers() if args.all else args.shots
     if not shots:
         print("available test shots:", " ".join(str(n) for n in replay.shot_numbers()))

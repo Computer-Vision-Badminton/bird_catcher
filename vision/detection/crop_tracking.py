@@ -1,6 +1,6 @@
 import numpy as np
 
-from bird_tracker import DISPARITY_RANGE_PX
+from vision.tracking.bird_tracker import DISPARITY_RANGE_PX
 
 CROP_SIZE = 640
 FOLLOW_CROP_SIZE = 320

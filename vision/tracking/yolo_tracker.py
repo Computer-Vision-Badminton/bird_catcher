@@ -3,18 +3,21 @@ import argparse
 import csv
 import json
 import os
+import sys
 import time
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from bird_tracker import EYES, FRAMES_AFTER_HIT, calibrated_right_row_offset, longest_rising_chain, match_in_right_eye, moving_blobs
-from crop_tracking import CROP_SIZE, MIN_CONFIDENCE, CropFollower, crop_origin, right_eye_aim
-from motion_view import current_position_motion_view
-from frames import FrameSource, crop_eye, plain_gray
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-DEFAULT_MODEL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "bird_yolo11n_v1.pt")
+from vision.tracking.bird_tracker import EYES, FRAMES_AFTER_HIT, calibrated_right_row_offset, longest_rising_chain, match_in_right_eye, moving_blobs
+from vision.detection.crop_tracking import CROP_SIZE, MIN_CONFIDENCE, CropFollower, crop_origin, right_eye_aim
+from vision.detection.motion_view import current_position_motion_view
+from vision.camera.frames import FrameSource, crop_eye, plain_gray
+
+DEFAULT_MODEL = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models", "bird_yolo11n_v1.pt")
 
 
 class MotionViewFrames:

@@ -5,7 +5,7 @@ import time
 import cv2
 import numpy as np
 
-from crop_tracking import CROP_SIZE, MIN_CONFIDENCE
+from vision.detection.crop_tracking import CROP_SIZE, MIN_CONFIDENCE
 
 DETECTOR_KINDS = ("ncnn", "pt", "hailo", "onnx")
 MOTION_VIEW_INPUT = "motion-view"

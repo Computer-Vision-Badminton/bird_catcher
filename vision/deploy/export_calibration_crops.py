@@ -10,11 +10,11 @@ import sys
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from crop_tracking import CROP_SIZE, crop_origin
-from detectors import GRAY_STACK_INPUT, INPUT_KINDS, MOTION_VIEW_INPUT
-from frames import FrameSource, crop_eye, plain_gray
+from vision.detection.crop_tracking import CROP_SIZE, crop_origin
+from vision.detection.detectors import GRAY_STACK_INPUT, INPUT_KINDS, MOTION_VIEW_INPUT
+from vision.camera.frames import FrameSource, crop_eye, plain_gray
 
 FOLLOWER_AIM_ERROR_PX = 150
 SHARE_WITH_BIRD = 0.8

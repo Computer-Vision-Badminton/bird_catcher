@@ -4,11 +4,12 @@ import os
 import cv2
 import numpy as np
 
-from calibrate_net import COURT_TO_INTERNAL_AXES, EYE_WIDTH, NOMINAL_BASELINE_M, court_cm_from_internal
+from vision.calibration.calibrate_net import COURT_TO_INTERNAL_AXES, EYE_WIDTH, NOMINAL_BASELINE_M, court_cm_from_internal
 
 
 class StereoCourt:
     def __init__(self, calibration):
+        self.calibration = calibration
         intrinsics = calibration["intrinsics"]
         focal = intrinsics["focal_px"]
         center_column, center_row = intrinsics["principal_point_px"]

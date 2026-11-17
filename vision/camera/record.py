@@ -49,7 +49,7 @@ from datetime import datetime
 import cv2
 
 WIDTH, HEIGHT, FPS = 2560, 720, 60
-RECORDINGS_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "recordings"))
+RECORDINGS_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "recordings"))
 
 
 def open_camera(dev):

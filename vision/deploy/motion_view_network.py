@@ -8,9 +8,9 @@ import onnx
 import torch
 from onnx import compose
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from motion_view import CONTEXT_BRIGHTNESS, HIGHLIGHT_GREEN_SHARE, MOTION_BOOST
+from vision.detection.motion_view import CONTEXT_BRIGHTNESS, HIGHLIGHT_GREEN_SHARE, MOTION_BOOST
 
 IMAGE_SIZE = 640
 GRAY_STACK_INPUT = "grays"

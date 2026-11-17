@@ -8,12 +8,12 @@ import time
 import cv2
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from crop_tracking import crop_origin
-from detectors import GRAY_STACK_INPUT, INPUT_KINDS, MOTION_VIEW_INPUT, STEREO_BATCH, HailoDetector, UltralyticsDetector, describe_output
-from frames import crop_eye, plain_gray
-from motion_view import current_position_motion_view
+from vision.detection.crop_tracking import crop_origin
+from vision.detection.detectors import GRAY_STACK_INPUT, INPUT_KINDS, MOTION_VIEW_INPUT, STEREO_BATCH, HailoDetector, UltralyticsDetector, describe_output
+from vision.camera.frames import crop_eye, plain_gray
+from vision.detection.motion_view import current_position_motion_view
 
 CHECK_SHOT = 37
 CHECK_FRAME = 826
@@ -76,7 +76,7 @@ def bird_crop(package_dir, input_kind, crop_size):
 def main():
     parser = argparse.ArgumentParser(description="Load the .hef on the AI HAT+ 2, show its inputs and outputs, and check it finds the bird in a known crop.")
     parser.add_argument("hef")
-    parser.add_argument("--package", default="pi_test_package")
+    parser.add_argument("--package", default="test/pi_test_package")
     parser.add_argument("--ncnn-model", help="also run the NCNN model on the same crop to compare")
     parser.add_argument("--hailo-input-bgr", action="store_true")
     parser.add_argument("--input", choices=INPUT_KINDS, default=MOTION_VIEW_INPUT, help="gray-stack for a .hef that builds the motion view itself")

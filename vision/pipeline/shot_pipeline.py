@@ -4,13 +4,14 @@ import time
 import cv2
 import numpy as np
 
-from bird_tracker import EYES, FRAMES_AFTER_HIT, longest_rising_chain, match_in_right_eye, moving_blobs
-from crop_tracking import CROP_SIZE, FOLLOW_CROP_SIZE, CropFollower, crop_origin, right_crop_center
-from detectors import GRAY_STACK_INPUT
-from flight_model import flight_points
-from frames import crop_eye, plain_gray
-from landing_worker import LandingPredictor
-from motion_view import current_position_motion_view
+from vision.tracking.bird_tracker import EYES, FRAMES_AFTER_HIT, longest_rising_chain, match_in_right_eye, moving_blobs_in_uint8
+from vision.detection.crop_tracking import CROP_SIZE, FOLLOW_CROP_SIZE, CropFollower, crop_origin, right_crop_center
+from vision.detection.detectors import GRAY_STACK_INPUT
+from vision.flight.flight_model import flight_points
+from vision.camera.frames import crop_eye, plain_gray
+from vision.landing_prediction.kalman_landing_model import KalmanLandingPredictor
+from vision.landing_prediction.landing_worker import LandingPredictor
+from vision.detection.motion_view import current_position_motion_view
 
 STAGES = ("gray", "motion_view", "aim", "yolo", "track", "predict")
 FRAMES_NEEDED_PER_VIEW = 3
@@ -18,6 +19,10 @@ FIT_EVERY_FRAMES = 1
 SEARCH_WITH_FOLLOW_ALWAYS = "always"
 SEARCH_WITH_FOLLOW_ONCE_SEEN = "once-seen"
 SEARCH_WITH_FOLLOW_CHOICES = (SEARCH_WITH_FOLLOW_ALWAYS, SEARCH_WITH_FOLLOW_ONCE_SEEN)
+LANDING_BY_FIT = "fit"
+LANDING_BY_KALMAN = "kalman"
+LANDING_METHODS = (LANDING_BY_FIT, LANDING_BY_KALMAN)
+FRAMES_KEPT_BLURRED = 4
 
 
 class StageClock:
@@ -31,9 +36,28 @@ class StageClock:
         self.started = now
 
 
+def blurred_for_blobs(gray):
+    return cv2.GaussianBlur(gray, (3, 3), 0)
+
+
 def blobs_around(grays):
-    smoothed = [cv2.GaussianBlur(gray, (3, 3), 0).astype(np.int16) for gray in grays]
-    return moving_blobs(*smoothed)
+    return moving_blobs_in_uint8(*[blurred_for_blobs(gray) for gray in grays])
+
+
+class BlurredFrameCache:
+    def __init__(self):
+        self.grays_and_blurred = collections.deque(maxlen=FRAMES_KEPT_BLURRED)
+
+    def blurred(self, gray):
+        for kept_gray, kept_blurred in self.grays_and_blurred:
+            if kept_gray is gray:
+                return kept_blurred
+        blurred = blurred_for_blobs(gray)
+        self.grays_and_blurred.append((gray, blurred))
+        return blurred
+
+    def blobs_around(self, grays):
+        return moving_blobs_in_uint8(*[self.blurred(gray) for gray in grays])
 
 
 def blobs_near(grays, center):
@@ -51,15 +75,19 @@ def detections_in_frame(detections_per_crop, origins):
 class ShotPipeline:
     def __init__(self, detector, court, right_row_offset, terminal_speed_m_s, correction, hit_frame, last_frame,
                  fit_every_frames=FIT_EVERY_FRAMES, predictor=None, follow_detector=None, search_with_follow_detector=None,
-                 overlap_detection=False):
+                 overlap_detection=False, landing_method=LANDING_BY_FIT):
         self.detector = detector
         self.follow_detector = follow_detector
         self.search_with_follow_detector = search_with_follow_detector
         self.detector_takes_grays = getattr(detector, "input_kind", None) == GRAY_STACK_INPUT
         self.court = court
         self.right_row_offset = right_row_offset
-        self.predictor = predictor or LandingPredictor(terminal_speed_m_s, correction, background=False)
-        self.predictor.start_shot()
+        self.landing_method = landing_method
+        if landing_method == LANDING_BY_KALMAN:
+            self.predictor = KalmanLandingPredictor(court.calibration)
+        else:
+            self.predictor = predictor or LandingPredictor(terminal_speed_m_s, correction, background=False)
+            self.predictor.start_shot()
         self.fit_every_frames = fit_every_frames
         self.frames_since_fit = fit_every_frames
         self.fits_started = 0
@@ -70,6 +98,7 @@ class ShotPipeline:
         self.recent_grays = {eye: collections.deque(maxlen=FRAMES_NEEDED_PER_VIEW) for eye in EYES}
         self.frame_times = {}
         self.left_follower = CropFollower()
+        self.blurred_left_frames = BlurredFrameCache()
         self.found = {eye: {} for eye in EYES}
         self.stereo = []
         self.landing_cm = None
@@ -122,7 +151,7 @@ class ShotPipeline:
         if not self.left_follower.needs_blobs(frame):
             return self.left_follower.crop_center(frame, [], width, height)
         heading = self.left_follower.last_seen_heading(frame)
-        blobs = blobs_around(grays) if heading is None else blobs_near(grays, heading)
+        blobs = self.blurred_left_frames.blobs_around(grays) if heading is None else blobs_near(grays, heading)
         return self.left_follower.crop_center(frame, blobs, width, height, without_blobs=heading)
 
     def take_frame(self, frame_index, stereo_frame, time_s):
@@ -191,6 +220,25 @@ class ShotPipeline:
         clock.lap("yolo")
         return frame, crop_size, inputs_arrived_at, job.call_ms
 
+    def take_known_frame_time(self, frame_index, time_s):
+        self.frame_times[frame_index] = time_s
+
+    def take_known_grays(self, grays_by_eye):
+        for eye in EYES:
+            self.recent_grays[eye].extend(grays_by_eye[eye])
+        self.newest_frame_arrived_at = time.perf_counter()
+
+    def take_running_detection(self, frame, crop_size, origins, job):
+        self.pending_detection = (frame, crop_size, origins, time.perf_counter(), job)
+
+    def push_detected(self, frame, left_detections, right_detections, crop_size):
+        if frame not in self.frames_to_track:
+            return None
+        clock = StageClock()
+        self.remember_detections(frame, left_detections, right_detections)
+        clock.lap("yolo")
+        return self.track_and_predict(frame, crop_size, clock.started, None, clock)
+
     def drain(self):
         clock = StageClock()
         detected = self.finish_pending_detection(clock)
@@ -200,7 +248,15 @@ class ShotPipeline:
         chain = longest_rising_chain(self.found["left"], self.hit_frame)
         self.stereo = match_in_right_eye(chain, self.found["right"], self.right_row_offset)
         clock.lap("track")
+        predicted = self.update_kalman_landing(frame) if self.landing_method == LANDING_BY_KALMAN else self.update_fitted_landing(frame)
+        clock.lap("predict")
+        return {"frame": frame, "predicted": predicted, "stages_ms": clock.timings, "crop_size": crop_size,
+                "landing_cm": None if self.landing_cm is None else [float(v) for v in self.landing_cm],
+                "landing_from_frame": self.landing_from_frame,
+                "ready_after_inputs_ms": (time.perf_counter() - inputs_arrived_at) * 1000,
+                "detector_call_ms": detector_call_ms}
 
+    def update_fitted_landing(self, frame):
         flight = flight_points(self.court, self.stereo, self.hit_frame, self.frame_times)
         self.frames_since_fit += 1
         if flight is not None and self.frames_since_fit >= self.fit_every_frames:
@@ -210,12 +266,15 @@ class ShotPipeline:
             else:
                 self.fits_waiting_for_worker += 1
         self.take_newest_landing()
-        clock.lap("predict")
-        return {"frame": frame, "predicted": flight is not None, "stages_ms": clock.timings, "crop_size": crop_size,
-                "landing_cm": None if self.landing_cm is None else [float(v) for v in self.landing_cm],
-                "landing_from_frame": self.landing_from_frame,
-                "ready_after_inputs_ms": (time.perf_counter() - inputs_arrived_at) * 1000,
-                "detector_call_ms": detector_call_ms}
+        return flight is not None
+
+    def update_kalman_landing(self, frame):
+        landing_cm, update_ms = self.predictor.update(self.stereo, self.hit_frame, self.frame_times)
+        self.fits_started += 1
+        self.fit_ms.append(update_ms)
+        if landing_cm is not None:
+            self.landing_from_frame, self.landing_cm = frame, landing_cm
+        return landing_cm is not None
 
     def take_newest_landing(self):
         result = self.predictor.poll()
@@ -225,6 +284,9 @@ class ShotPipeline:
 
     def finish(self):
         self.drain()
+        if self.landing_method == LANDING_BY_KALMAN:
+            self.final_landing_cm = self.predictor.update(self.stereo, self.hit_frame, self.frame_times)[0]
+            return self.final_landing_cm
         flight = flight_points(self.court, self.stereo, self.hit_frame, self.frame_times)
         if flight is not None:
             self.final_landing_cm = self.predictor.final_landing_cm(*flight)
