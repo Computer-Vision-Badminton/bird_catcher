@@ -17,8 +17,11 @@ data/recordings/
 # Labeling, visualization and benchmark tools (not used in production)
 vision/helper/
 
-# Test-run results written by pi_realtime_test.py
-pi_test_package/results_*.json
+# Test packages: only test/pi_test_package/ is tracked, without the results written by pi_realtime_test.py;
+# test/pi_hit_test_package/ (hit-detection clips, 800 MB) and test/pi_live_test_package/ (live-mode video, 550 MB) stay local
+test/*
+!test/pi_test_package/
+test/pi_test_package/results_*.json
 
 # Hailo INT8 calibration crops (export_calibration_crops.py)
 calibration_crops/
@@ -26,5 +29,22 @@ calibration_crops.zip
 calibration_gray_stack/
 calibration_gray_stack.zip
 
-# Compiled C++ flight core (vision/flight_cpp/build.sh)
-vision/*.so
+# Compiled C++ flight core (vision/flight/core_source/build.sh)
+vision/flight/*.so
+
+# Model files regenerated from models/bird_yolo11n_v1.pt (not used by the pipeline)
+models/bird_yolo11n_v1.hef
+models/bird_yolo11n_v1.onnx
+models/*_320.onnx
+models/*_ncnn_model/
+
+# Experiments kept locally; only the replay and live tests (and what they import) are tracked
+vision/experiment/*
+!vision/experiment/__init__.py
+!vision/experiment/pi_realtime_test.py
+!vision/experiment/live_replay_test.py
+!vision/experiment/hit_from_rising_chain.py
+!vision/experiment/make_live_test_package.py
+
+# Personal scratch notebooks, kept locally
+playground/

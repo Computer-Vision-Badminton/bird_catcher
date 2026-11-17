@@ -11,7 +11,9 @@ import cv2
 import numpy as np
 from scipy.optimize import least_squares
 
-from frames import FrameSource
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+from vision.camera.frames import FrameSource
 
 PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calibrate_net.html")
 EYE_WIDTH, EYE_HEIGHT = 1280, 720

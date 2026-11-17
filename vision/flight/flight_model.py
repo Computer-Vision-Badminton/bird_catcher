@@ -4,7 +4,7 @@ import numpy as np
 from scipy.optimize import least_squares
 
 try:
-    import flight_core
+    from vision.flight import flight_core
 except ImportError:
     flight_core = None
 

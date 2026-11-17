@@ -2,7 +2,7 @@ import multiprocessing
 import queue
 import time
 
-from flight_model import corrected_landing_cm, corrected_landing_with_warm_start, drag_per_metre
+from vision.flight.flight_model import corrected_landing_cm, corrected_landing_with_warm_start, drag_per_metre
 
 STOP = None
 

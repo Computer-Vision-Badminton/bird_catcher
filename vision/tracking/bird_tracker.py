@@ -24,6 +24,14 @@ def moving_blobs(older, middle, newer):
             for k in range(1, count) if BLOB_AREA_PX[0] <= stats[k, cv2.CC_STAT_AREA] <= BLOB_AREA_PX[1]]
 
 
+def moving_blobs_in_uint8(older, middle, newer):
+    moving = cv2.min(cv2.absdiff(newer, middle), cv2.absdiff(middle, older))
+    _, above_threshold = cv2.threshold(moving, MOTION_THRESHOLD, 1, cv2.THRESH_BINARY)
+    count, _, stats, centers = cv2.connectedComponentsWithStats(above_threshold)
+    return [(float(centers[k][0]), float(centers[k][1]), int(stats[k, cv2.CC_STAT_AREA]))
+            for k in range(1, count) if BLOB_AREA_PX[0] <= stats[k, cv2.CC_STAT_AREA] <= BLOB_AREA_PX[1]]
+
+
 def next_rising_step(found, frame, x, y):
     for gap in range(1, MAX_SKIPPED_FRAMES + 2):
         options = []

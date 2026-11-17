@@ -13,12 +13,14 @@ Usage
 
 One calibration snapshot is saved automatically on the first frame of a session
 (data/recordings/<session>/calibration.png). The tripod stays put, so every clip shares it.
-Re-running the same --session keeps the existing snapshot.
+Re-running the same --session keeps the existing snapshot. The preview shows it in the
+top-right corner; press c to retake it (the old one is kept as calibration_replaced_*.png).
 
 Keys in the preview window
   SPACE  clip mode: start / stop a clip (one file per clear)
          continuous mode: drop a marker (helps split clears later)
   s      save a single stereo frame as PNG (ground-truth)
+  c      retake the calibration snapshot from the current frame
   e / E  exposure down / up      g / G  gain down / up
   q      quit
 
@@ -47,7 +49,7 @@ from datetime import datetime
 import cv2
 
 WIDTH, HEIGHT, FPS = 2560, 720, 60
-RECORDINGS_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "recordings"))
+RECORDINGS_ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "data", "recordings"))
 
 
 def open_camera(dev):
@@ -182,6 +184,39 @@ def check(cap, seconds=5):
 
 
 CALIBRATION_SNAPSHOT = "calibration.png"
+PREVIEW_SIZE = (1280, 360)
+THUMBNAIL_SIZE = (320, 180)
+THUMBNAIL_MARGIN = 8
+
+
+def calibration_thumbnail(stereo_frame):
+    left_eye = stereo_frame[:, :stereo_frame.shape[1] // 2]
+    return cv2.resize(left_eye, THUMBNAIL_SIZE, interpolation=cv2.INTER_AREA)
+
+
+def draw_calibration_preview(preview, thumbnail):
+    width, height = THUMBNAIL_SIZE
+    right = preview.shape[1] - THUMBNAIL_MARGIN
+    left, top = right - width, THUMBNAIL_MARGIN + 18
+    cv2.rectangle(preview, (left - 2, top - 20), (right + 1, top + height + 1), (0, 0, 0), -1)
+    if thumbnail is None:
+        cv2.putText(preview, "no calibration yet", (left + 6, top + height // 2), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (255, 255, 255), 1)
+    else:
+        preview[top:top + height, left:right] = thumbnail
+    cv2.putText(preview, "calibration (c = retake)", (left + 4, top - 5), cv2.FONT_HERSHEY_SIMPLEX,
+                0.45, (0, 255, 255), 1)
+    cv2.rectangle(preview, (left - 1, top - 1), (right, top + height), (0, 255, 255), 1)
+
+
+def save_calibration_snapshot(path, frame):
+    if os.path.exists(path):
+        replaced = path.replace(".png", f"_replaced_{datetime.now().strftime('%H%M%S')}.png")
+        os.replace(path, replaced)
+        print("previous calibration kept as", replaced)
+    cv2.imwrite(path, frame)
+    print("saved calibration snapshot", path)
+    return calibration_thumbnail(frame)
 
 
 def next_index(folder, prefix, suffix):
@@ -221,9 +256,10 @@ def record(cap, dev, args):
     exposure, gain = args.exposure, args.gain
 
     calibration_path = os.path.join(args.session, CALIBRATION_SNAPSHOT)
-    calibration_saved = os.path.exists(calibration_path)
-    if calibration_saved:
-        print(f"keeping existing calibration snapshot {calibration_path}")
+    existing_calibration = cv2.imread(calibration_path) if os.path.exists(calibration_path) else None
+    thumbnail = calibration_thumbnail(existing_calibration) if existing_calibration is not None else None
+    if thumbnail is not None:
+        print(f"keeping existing calibration snapshot {calibration_path} (press c to retake)")
 
     writer_idx = next_index(args.session, prefix + "_", ".avi")
     snap_idx = next_index(args.session, "frame_", ".png")
@@ -251,9 +287,9 @@ def record(cap, dev, args):
         cv2.namedWindow("zed", cv2.WINDOW_NORMAL)
         cv2.resizeWindow("zed", 1280, 360)
         if args.continuous:
-            print("continuous: SPACE marker | s snapshot | e/E g/G exposure, gain | q quit")
+            print("continuous: SPACE marker | s snapshot | c retake calibration | e/E g/G exposure, gain | q quit")
         else:
-            print("SPACE start/stop clip | s snapshot | e/E g/G exposure, gain | q quit")
+            print("SPACE start/stop clip | s snapshot | c retake calibration | e/E g/G exposure, gain | q quit")
 
     n_shown = 0
     t_last = time.monotonic()
@@ -264,10 +300,8 @@ def record(cap, dev, args):
         if not ok:
             print("frame grab failed")
             continue
-        if not calibration_saved:
-            cv2.imwrite(calibration_path, frame)
-            calibration_saved = True
-            print("saved calibration snapshot", calibration_path)
+        if thumbnail is None:
+            thumbnail = save_calibration_snapshot(calibration_path, frame)
         if writer is not None:
             writer.push(frame, t)
 
@@ -281,10 +315,11 @@ def record(cap, dev, args):
                 break
             continue
 
-        small = cv2.resize(frame, (1280, 360))
+        small = cv2.resize(frame, PREVIEW_SIZE)
         status = status_line(fps_est, exposure, gain, writer, writer_name(), args.continuous)
         cv2.putText(small, status, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                     (0, 0, 255) if writer else (0, 255, 0), 2)
+        draw_calibration_preview(small, thumbnail)
         cv2.imshow("zed", small)
 
         k = cv2.waitKey(1) & 0xFF
@@ -299,6 +334,8 @@ def record(cap, dev, args):
             else:
                 stop_writer()
                 writer, writer_idx = None, writer_idx + 1
+        elif k == ord("c"):
+            thumbnail = save_calibration_snapshot(calibration_path, frame)
         elif k == ord("s"):
             p = os.path.join(args.session, f"frame_{snap_idx:04d}.png")
             cv2.imwrite(p, frame)

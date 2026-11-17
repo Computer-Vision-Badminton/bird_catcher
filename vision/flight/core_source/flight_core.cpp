@@ -73,10 +73,7 @@ static py::array_t<double> positions_at(py::array_t<double, py::array::c_style |
     return positions;
 }
 
-static py::array_t<double> landing_point(py::array_t<double, py::array::c_style | py::array::forcecast> start_position,
-                                         py::array_t<double, py::array::c_style | py::array::forcecast> start_velocity,
-                                         double drag, double step_s, double max_flight_s, double gravity) {
-    FlightState state{vector_from(start_position), vector_from(start_velocity)};
+static Vector landing_from(FlightState state, double drag, double step_s, double max_flight_s, double gravity) {
     double clock = 0.0;
     Vector landing = state.position;
     while (clock < max_flight_s) {
@@ -90,17 +87,33 @@ static py::array_t<double> landing_point(py::array_t<double, py::array::c_style 
         clock += step_s;
         landing = state.position;
     }
+    return landing;
+}
+
+static py::array_t<double> array_from(Vector value) {
     py::array_t<double> result(3);
     double *out = result.mutable_data();
-    out[0] = landing.x;
-    out[1] = landing.y;
-    out[2] = landing.z;
+    out[0] = value.x;
+    out[1] = value.y;
+    out[2] = value.z;
     return result;
 }
+
+static py::array_t<double> landing_point(py::array_t<double, py::array::c_style | py::array::forcecast> start_position,
+                                         py::array_t<double, py::array::c_style | py::array::forcecast> start_velocity,
+                                         double drag, double step_s, double max_flight_s, double gravity) {
+    const FlightState state{vector_from(start_position), vector_from(start_velocity)};
+    return array_from(landing_from(state, drag, step_s, max_flight_s, gravity));
+}
+
+#include "kalman_flight.hpp"
+#include "final_landing.hpp"
 
 PYBIND11_MODULE(flight_core, module) {
     module.def("positions_at", &positions_at, py::arg("start_position"), py::arg("start_velocity"), py::arg("drag"),
                py::arg("times"), py::arg("step_s"), py::arg("gravity"));
     module.def("landing_point", &landing_point, py::arg("start_position"), py::arg("start_velocity"), py::arg("drag"),
                py::arg("step_s"), py::arg("max_flight_s"), py::arg("gravity"));
+    bind_kalman_flight(module);
+    bind_final_landing(module);
 }
